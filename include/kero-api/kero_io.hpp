@@ -37,7 +37,6 @@ using uint = unsigned long;
 
 class Section_GV;
 class Section_Raw;
-class Section_Minimizer_Old;
 class Section_Minimizer;
 class Section_Index;
 class Section_Hashtable;

@@ -113,13 +113,13 @@ void Kero_file::open(string mode) {
 	if (this->is_writer) {
 		uint8_t default_encoding = 0b00011110;
 		// Signature
-		uint8_t buff[] = {	'K', 'E', 'R', 'O',
+		uint8_t buff[] = {	'K', 'E', 'R',
 							KERO_VERSION_MAJOR, KERO_VERSION_MINOR,
 							default_encoding,
 							0 /*uniqueness*/, 0 /*canonicity*/
 						};
 
-		this->write(buff, 9);
+		this->write(buff, 8);
 
 		this->indexed = true;
 		this->end_position = 0;
@@ -128,8 +128,8 @@ void Kero_file::open(string mode) {
 	else if (this->is_reader) {
 		// Header integrity marker
 		uint8_t buff[4];
-		this->read(buff, 4);
-		if (buff[0] != 'K' or buff[1] != 'E' or buff[2] != 'R' or buff[3] != 'O') {
+		this->read(buff, 3);
+		if (buff[0] != 'K' or buff[1] != 'E' or buff[2] != 'R') {
 			cerr << "Absent KERO signature at the beginning of the file." << endl;
 			cerr << "Please check that the file is not corrupted" << endl;
 			throw "Absent signature at the beginning";
@@ -158,11 +158,11 @@ void Kero_file::open(string mode) {
 
 		// Footer integrity marker
 		unsigned long saved_position = this->tellp();
-		this->jump_to(4, true);
+		this->jump_to(3, true);
 		this->end_position = this->tellp();
-		this->read(buff, 4);
+		this->read(buff, 3);
 		this->jump_to(saved_position);
-		if (buff[0] != 'K' or buff[1] != 'E' or buff[2] != 'R' or buff[3] != 'O') {
+		if (buff[0] != 'K' or buff[1] != 'E' or buff[2] != 'R') {
 			cerr << "Absent KERO signature at the end of the file." << endl;
 			cerr << "Please check that the file is not corrupted" << endl;
 			throw "Absent signature at the end";
@@ -182,8 +182,8 @@ void Kero_file::close(bool write_buffer) {
 		if (this->indexed)
 			this->write_footer();
 		// Write the signature
-		char signature[] = {'K', 'E', 'R', 'O'};
-		this->write((uint8_t *)signature, 4);
+		char signature[] = {'K', 'E', 'R'};
+		this->write((uint8_t *)signature, 3);
 		
 		// Write the end of the file
 		if (write_buffer) {
@@ -727,7 +727,6 @@ Section * SectionBuilder::build(Kero_file * file) {
 			return new Section_GV(file);
 		case 'r':
 			return new Section_Raw(file);
-		case 'm':
         case 'M':
 			return new Section_Minimizer(file);
         case 'h':
