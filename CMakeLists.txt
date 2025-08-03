@@ -11,7 +11,6 @@ if (NOT CMAKE_CXX_FLAGS)
     set(CMAKE_CXX_FLAGS "-Wall -Ofast -g")
 endif()
 
-add_subdirectory("benchmarks")
 add_subdirectory("external/pthash")
 
 add_library(kero

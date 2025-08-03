@@ -9,7 +9,7 @@
  *
  */
 
-#include "kero-cpp-api/kero_mmap.hpp"
+#include "kero-api/kero_mmap.hpp"
 
 // Required for mmap, fstat, etc.
 #include <sys/mman.h>

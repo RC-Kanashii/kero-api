@@ -26,8 +26,8 @@
 #include <map>
 #include <vector>
 
-#include "kero-cpp-api/kero_io.hpp"
-#include "kero-cpp-api/detail/util.hpp"
+#include "kero-api/kero_io.hpp"
+#include "kero-api/detail/util.hpp"
 #include "ic.h"
 
 using namespace std;

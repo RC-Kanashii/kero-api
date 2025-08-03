@@ -11,7 +11,7 @@ The high-level `Kero_reader` API allows you to iterate through all k-mers in a f
 Use a simple while loop with `next_kmer` to process each k-mer and its associated data.
 
 ```cpp
-#include "kero-cpp-api/kero_io.hpp"
+#include "kero-api/kero_io.hpp"
 
 Kero_reader reader("my_file.kero");
 uint8_t* kmer;

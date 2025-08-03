@@ -14,7 +14,7 @@
  *
  */
 
-#include "kero-cpp-api/detail/util.hpp"
+#include "kero-api/detail/util.hpp"
 
 uint64_t kero::get_mini_mask(uint64_t m) {
     // Note: left shift a 64-bit integer by 64 is undefined behavior

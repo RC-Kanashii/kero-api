@@ -162,5 +162,4 @@ doc/
 Doxyfile
 
 # kero files
-kero_io.hpp
 **/*.kero
