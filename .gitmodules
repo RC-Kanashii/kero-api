@@ -1,0 +1,7 @@
+[submodule "external/pthash"]
+	path = external/pthash
+	url = git@github.com:jermp/pthash.git
+	ignore = all
+[submodule "external/TurboPFor"]
+	path = external/TurboPFor
+	url = git@github.com:powturbo/TurboPFor-Integer-Compression.git
