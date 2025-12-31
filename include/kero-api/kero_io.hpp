@@ -62,7 +62,7 @@ public:
 	unsigned long next_free;
 	bool delete_on_destruction;
 
-	bool tmp_closed;	
+	bool tmp_closed;
 
 	/**
 	 * Read encoding from file and save it to the public argument "encoding".
@@ -85,14 +85,14 @@ public:
 	uint8_t minor_version;
 	bool uniqueness;
 	bool canonicity;
-	
+
 	// True when the header have been read/write and the fs pointer is after.
 	bool header_over;
 	bool footer_discovery_ended;
 	bool index_discovery_ended;
 
 	unsigned long end_position;
-	
+
 	bool is_writer;
 	bool is_reader;
 
@@ -104,7 +104,7 @@ public:
 
 	// encoding:        A:0  C:1 G:3 T:2
 	uint8_t encoding[4] = {0, 1, 3, 2};
-	
+
 	uint32_t metadata_size = 0;
 
 	std::unordered_map<std::string, uint64_t> global_vars;
@@ -124,7 +124,7 @@ public:
 	Kero_file(const std::string filename, const std::string mode);
 	/** Reopen from the beginning the KERO file defined at the construction.
 	 * The opening mode can differ from the original one.
-	 * 
+	 *
 	 * @param mode r for reading, w for writing (overwrite any previous file).
 	 */
 	void open(const std::string mode);
@@ -134,7 +134,7 @@ public:
 	~Kero_file();
 	/**
 	 * Close the file.
-	 * 
+	 *
 	 * @param write_buffer Write the buffer in writing mode. If set to false, the buffer is never
 	 * saved on disk and the file will be deleted on object destruction.
 	 */
@@ -143,7 +143,7 @@ public:
 	/** Read a slice of the file and copy it into bytes
 	 * @param bytes Bytes array already allocated by the user (minimum size bytes)
 	 * @param Size in bytes to copy
-	 * 
+	 *
 	 * @return true if everything is ok.
 	 */
 	void read(uint8_t * bytes, unsigned long size);
@@ -159,7 +159,7 @@ public:
 	 */
 	void write_at(const uint8_t * bytes, unsigned long size, unsigned long position);
 	/** Give the current position in the file
-	 * 
+	 *
 	 * @return position from the beginning of the file.
 	 */
 	unsigned long tellp();
@@ -168,7 +168,7 @@ public:
 	 **/
 	void jump(long size);
 	/** Jump to a specific position in the file.
-	 * 
+	 *
 	 * @param position Position to reach in the file.
 	 * @param from_end If true, position from the end of the file.
 	 */
@@ -184,7 +184,7 @@ public:
 	 * This function is automatically called on write events if the file has been temporarily closed.
 	 */
 	void reopen();
-	
+
 
 	// --- Index related ---
 
@@ -269,8 +269,16 @@ public:
     // --- Section Hashtable related ---
     /**
      * Register a minimizer section into the hashtable
+     * @param minimizer The minimizer value to register
      */
     void register_minimizer_section(uint64_t minimizer);
+
+    /**
+     * Register a minimizer section into the hashtable at specific position
+     * @param minimizer The minimizer value to register
+     * @param position The file position of the section
+     */
+    void register_minimizer_section(uint64_t minimizer, uint64_t position);
 };
 
 
@@ -286,9 +294,9 @@ class Section {
 
 		Section(Kero_file * file);
 		virtual ~Section() {};
-		
+
 		/** Copy the current section in the file pointed by the function.
-		 * 
+		 *
 		 * @param file The file where to copy the section
 		 **/
 		virtual void copy(Kero_file * file) {};
@@ -301,9 +309,9 @@ class SectionBuilder {
 public:
 	/** Build the next section in the file.
 	 * The file pointer must be aligned on the first Byte of a section.
-	 * 
+	 *
 	 * @param file Pointer to a file to read.
-	 * 
+	 *
 	 * @return The correct section from the file.
 	 **/
 	static Section * build(Kero_file * file);
@@ -339,7 +347,7 @@ public:
 	 */
 	void write_var(const std::string & var_name, uint64_t value);
 	/** Copy the current section in the file pointed by the function.
-	 * 
+	 *
 	 * @param file The file where to copy the section
 	 **/
 	void copy(Kero_file * file);
@@ -376,7 +384,7 @@ public:
 	 * Read the next block of the section.
 	 * The sequence of the block is pushed in the seq array and the data in the data array.
 	 * These arrays must be already allocated.
-	 * 
+	 *
 	 * @param seq Array filled with the compacted sequence (2 bit / nucl).
 	 * @param data Array filled with data linked to the kmers of the sequence.
 	 *
@@ -387,7 +395,7 @@ public:
 	 * Read the next block of the section.
 	 * The sequence of the block is pushed in the seq_data array, immediatly followed by data.
 	 * The array must be already allocated.
-	 * 
+	 *
 	 * @param seq_data Array filled with the compacted sequence (2 bit / nucl) immediatly followed
 	 * with data linked to the kmers of the sequence.
 	 *
@@ -447,7 +455,7 @@ public:
 	 * Read the next block of the section.
 	 * The sequence of the block is pushed in the seq array and the data in the data array.
 	 * These arrays must be already allocated.
-	 * 
+	 *
 	 * @param seq Array filled with the compacted sequence (2 bit / nucl).
 	 * @param data Array filled with data linked to the kmers of the sequence.
 	 *
@@ -459,7 +467,7 @@ public:
 	 * Read the next block of the section.
 	 * The sequence of the block is pushed in the seq_data array, immediatly followed by data.
 	 * The array must be already allocated.
-	 * 
+	 *
 	 * @param seq_data Array filled with the compacted sequence (2 bit / nucl) immediatly followed
 	 * with data linked to the kmers of the sequence.
 	 *
@@ -468,7 +476,7 @@ public:
 	uint64_t read_compacted_sequence(uint8_t* seq_data);
 	/**
 	 * Write a block containing the sequence seq with kmer data associated.
-	 * 
+	 *
 	 * @param seq A compacted sequence (2 bit / nucl).
 	 * @param seq_size Size of the sequence (in nucleotides).
 	 * @param data Data array of the kmers in the sequence.
@@ -480,7 +488,7 @@ public:
 	 */
 	void jump_sequence();
 	/** Copy the current section in the file pointed by the function.
-	 * 
+	 *
 	 * @param file The file where to copy the section
 	 **/
 	void copy(Kero_file * file);
@@ -624,9 +632,9 @@ public:
 	uint64_t k;
 	uint64_t data_size;
 	uint64_t max;
-	
+
 	Kero_file * file;
-	
+
 	Kero_reader(std::string filename);
 	~Kero_reader();
 

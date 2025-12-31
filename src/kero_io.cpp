@@ -55,10 +55,10 @@ static inline size_t round_up(size_t n, size_t a);
 Kero_file::Kero_file(const string filename, const string mode) {
 	// Variable init
 	this->filename = filename;
-	
+
 	this->is_writer = false;
 	this->is_reader = false;
-	
+
 	this->writing_started = false;
 	this->next_free = 0;
 	this->buffer_size = 1 << 10; // 1 KB
@@ -184,7 +184,7 @@ void Kero_file::close(bool write_buffer) {
 		// Write the signature
 		char signature[] = {'K', 'E', 'R'};
 		this->write((uint8_t *)signature, 3);
-		
+
 		// Write the end of the file
 		if (write_buffer) {
 			// The file was never opened
@@ -394,7 +394,7 @@ void Kero_file::read(uint8_t * bytes, unsigned long size) {
 
 		memcpy(bytes, this->file_buffer + buffer_position, size);
 	}
-	
+
 	this->current_position += size;
 }
 
@@ -494,7 +494,7 @@ void Kero_file::write_at(const uint8_t * bytes, unsigned long size, unsigned lon
 	// Write the buffer in RAM
 	else {
 		unsigned long corrected_position = position - this->file_size;
-		
+
 		// Write in the current buffer space
 		if (corrected_position + size <= this->next_free) {
 			memcpy(this->file_buffer + corrected_position, bytes, size);
@@ -699,6 +699,13 @@ void Kero_file::register_minimizer_section(uint64_t minimizer) {
     if (this->is_writer and this->indexed) {
         this->mini_list.push_back(minimizer);
         this->mini_pos.push_back(this->tellp());
+    }
+}
+
+void Kero_file::register_minimizer_section(uint64_t minimizer, uint64_t position) {
+    if (this->is_writer and this->indexed) {
+        this->mini_list.push_back(minimizer);
+        this->mini_pos.push_back(position);
     }
 }
 
@@ -929,7 +936,7 @@ Section_Raw::Section_Raw(Kero_file * file) : Section(file){
 		throw "Impossible to read the raw section due to missing max variable";
 	if(file->global_vars.find("data_size") == file->global_vars.end())
 		throw "Impossible to read the raw section due to missing data_size variable";
-	
+
 	uint64_t k = file->global_vars["k"];
 	uint64_t max = file->global_vars["max"];
 	uint64_t data_size = file->global_vars["data_size"];
@@ -1063,7 +1070,7 @@ void Section_Raw::jump_sequence() {
 	size_t seq_bytes_needed = (seq_size + 3) / 4;
 	// 3 - Determine the data size
 	size_t data_bytes_used = data_size * nb_kmers_in_block;
-	// 4 - Jumb over the 
+	// 4 - Jumb over the
 	file->jump(seq_bytes_needed + data_bytes_used);
 	this->remaining_blocks -= 1;
 }
@@ -1153,6 +1160,7 @@ void Section_Minimizer::read_section_header() {
 	load_big_endian(buff, 8, this->nb_blocks);
 	this->remaining_blocks = this->nb_blocks;
 
+#ifndef KERO_MODE_ROW
 	// 4. Read offsets of columns
 	this->file->read(buff, 8);
 	load_big_endian(buff, 8, this->n_col_offset);
@@ -1169,6 +1177,10 @@ void Section_Minimizer::read_section_header() {
 	this->file->read(buff, 8);
 	load_big_endian(buff, 8, this->seq_col_offset);
 	this->seq_col_offset += this->start_pos;
+#else
+	// ROW mode: data starts right after header
+	this->n_col_offset = this->file->tellp();
+#endif
 }
 
 
@@ -1177,9 +1189,12 @@ void Section_Minimizer::read_section_header() {
  * - Section type
  * - Minimizer
  * - Number of super k-mers
- * - Column offsets (placeholders for now)
+ * - Column offsets (placeholders for now, only in columnar modes)
  */
 void Section_Minimizer::write_section_header() {
+	// Note: This function is only called in columnar modes.
+	// In ROW mode, the header is written in write_minimizer().
+
 	// 1. Write Section type
 	char type = 'M';
 	this->file->write(reinterpret_cast<uint8_t *>(&type), 1);
@@ -1192,7 +1207,7 @@ void Section_Minimizer::write_section_header() {
 	store_big_endian(buff, 8, this->nb_blocks);
 	this->file->write(buff, 8);
 
-	// 4. Write column offset placeholder
+	// 4. Write column offset placeholders (for columnar modes)
 	memset(buff, 0, 8);
 	this->n_col_offset = this->file->tellp();
 	this->file->write(buff, 8); // n_col_offset placeholder
@@ -1209,21 +1224,61 @@ void Section_Minimizer::write_section_header() {
 
 
 /* Write the columns of the vertical minimizer section.
- * The columns are written in the following order:
- * 1. n value column
- * 2. m index column
- * 3. data column
- * 4. seq column
+ * This function supports three storage modes for ablation study:
+ * - KERO_MODE_ROW: Row-oriented storage (no compression)
+ * - KERO_MODE_COLUMNAR_NOCOMP: Columnar storage (no integer array compression)
+ * - KERO_MODE_COLUMNAR_COMP: Columnar storage + integer array compression (default)
  */
 void Section_Minimizer::write_columns() {
 	uint8_t buff[8];
+
+#ifdef KERO_MODE_ROW
+	// ===== MODE 1: ROW-ORIENTED STORAGE =====
+	// In ROW mode, data has already been written in write_compacted_sequence_without_mini()
+	// Nothing to do here
+
+#elif defined(KERO_MODE_COLUMNAR_NOCOMP)
+	// ===== MODE 2: COLUMNAR STORAGE (No Integer Array Compression) =====
+
+	// 1. Write n value column (uncompressed)
+	this->n_col_offset = this->file->tellp();
+	store_big_endian(buff, 8, n_value_buffer.size() * 8);  // Total bytes
+	this->file->write(buff, 8);
+	for (uint64_t val : n_value_buffer) {
+		store_big_endian(buff, 8, val);
+		this->file->write(buff, 8);
+	}
+
+	// 2. Write m_idx column (uncompressed)
+	this->m_idx_col_offset = this->file->tellp();
+	store_big_endian(buff, 8, m_idx_buffer.size() * 8);  // Total bytes
+	this->file->write(buff, 8);
+	for (uint64_t val : m_idx_buffer) {
+		store_big_endian(buff, 8, val);
+		this->file->write(buff, 8);
+	}
+
+	// 3. Write data column (uncompressed)
+	this->data_col_offset = this->file->tellp();
+	store_big_endian(buff, 8, data_buffer.size());
+	this->file->write(buff, 8);
+	if (!data_buffer.empty()) {
+		this->file->write(data_buffer.data(), data_buffer.size());
+	}
+
+	// 4. Write seq column
+	this->seq_col_offset = this->file->tellp();
+	this->file->write(this->seq_buffer.data(), this->seq_buffer.size());
+
+#else  // KERO_MODE_COLUMNAR_COMP (default)
+	// ===== MODE 3: COLUMNAR STORAGE + INTEGER ARRAY COMPRESSION (Current/Default) =====
 
 	// Pre-allocate buffers for compression
 	size_t compressed_buf_size = std::max(p4nenc_bound(n_value_buffer.size(), sizeof(uint64_t)),
 		std::max(p4nenc_bound(m_idx_buffer.size(), sizeof(uint64_t)), p4nenc_bound(data_buffer.size(), sizeof(uint8_t))));
 	auto* compressed_buf = new uint8_t[compressed_buf_size];
 
-	// 1. Write n value column
+	// 1. Write n value column (compressed)
 	this->n_col_offset = this->file->tellp();
 	{
 		// Compress n_value_buffer
@@ -1235,7 +1290,7 @@ void Section_Minimizer::write_columns() {
 		this->file->write(compressed_buf, compressed_n_size);
 	}
 
-	// 2. Write m_idx column
+	// 2. Write m_idx column (compressed)
 	{
 		this->m_idx_col_offset = this->file->tellp();
 		// Compress m_idx_buffer
@@ -1247,7 +1302,7 @@ void Section_Minimizer::write_columns() {
 		this->file->write(compressed_buf, compressed_m_idx_size);
 	}
 
-	// 3. Write data column
+	// 3. Write data column (compressed)
 	{
 		this->data_col_offset = this->file->tellp();
 		// Write the size of the data
@@ -1266,6 +1321,9 @@ void Section_Minimizer::write_columns() {
 	// 4. Write seq column
 	this->seq_col_offset = this->file->tellp();
 	this->file->write(this->seq_buffer.data(), this->seq_buffer.size());
+
+	delete[] compressed_buf;
+#endif
 }
 
 
@@ -1274,6 +1332,8 @@ void Section_Minimizer::write_columns() {
  * It is called at the end of the section writing process.
  */
 void Section_Minimizer::backfill_column_offsets() {
+#ifndef KERO_MODE_ROW
+	// Only backfill in columnar modes
 	// Save the original position
 	uint64_t original_pos = this->file->tellp();
 
@@ -1295,6 +1355,8 @@ void Section_Minimizer::backfill_column_offsets() {
 
 	// Return to the original position
 	this->file->jump_to(original_pos);
+#endif
+	// ROW mode: no backfill needed
 }
 
 
@@ -1404,9 +1466,29 @@ Section_Minimizer::~Section_Minimizer() {
  * in the internal variable for later writing in the close() function.
  */
 void Section_Minimizer::write_minimizer(uint8_t* minimizer) {
-	// Don't directly write the minimizer. Copy it to the internal minimizer variable instead
-	// Writing will be done in the close() function.
+	// Copy minimizer to internal variable
 	memcpy(this->minimizer, minimizer, this->nb_bytes_mini);
+
+#ifdef KERO_MODE_ROW
+	// ROW mode: Write header immediately (with nb_blocks=0 as placeholder)
+	// This ensures the file structure is [header][data] instead of [data][header]
+
+	uint64_t write_start_pos = this->file->tellp();
+
+	// 1. Write Section type
+	char type = 'M';
+	this->file->write(reinterpret_cast<uint8_t *>(&type), 1);
+
+	// 2. Write minimizer
+	this->file->write(this->minimizer, this->nb_bytes_mini);
+
+	// 3. Write nb_blocks placeholder (will be backfilled in close())
+	uint8_t buff[8];
+	store_big_endian(buff, 8, 0);  // Placeholder: 0 blocks
+	this->n_col_offset = this->file->tellp();  // Save position for backfilling
+	this->file->write(buff, 8);
+#endif
+	// In columnar modes, writing will be done in the close() function.
 }
 
 
@@ -1419,6 +1501,35 @@ void Section_Minimizer::write_compacted_sequence_without_mini(
 	uint8_t* seq, uint64_t seq_size, uint64_t mini_pos, uint8_t* data_array) {
 	// 1. Calculate the number of k-mers in the current super k-mer
 	uint64_t nb_kmers = seq_size + this->m - this->k + 1;
+
+#ifdef KERO_MODE_ROW
+	// ===== ROW MODE: Direct write without buffering =====
+	// Format: [n:8B][m_idx:8B][seq:nB][data:nB]
+	uint8_t buff[8];
+
+	// 1. Write n (number of k-mers)
+	store_big_endian(buff, 8, nb_kmers);
+	this->file->write(buff, 8);
+
+	// 2. Write m_idx (minimizer position)
+	store_big_endian(buff, 8, mini_pos);
+	this->file->write(buff, 8);
+
+	// 3. Write sequence (without minimizer)
+	size_t seq_bytes = bytes_from_bit_array(2, seq_size);
+	this->file->write(seq, seq_bytes);
+
+	// 4. Write data (if any)
+	size_t data_bytes = this->data_size * nb_kmers;
+	if (data_bytes > 0) {
+		this->file->write(data_array, data_bytes);
+	}
+
+	// Update the number of super k-mers
+	this->nb_blocks++;
+
+#else
+	// ===== COLUMNAR MODE: Buffer for later column-wise write =====
 
 	// 2. Write the number of k-mers and the minimizer index into memory buffers column-wise
 	n_value_buffer.push_back(nb_kmers);
@@ -1434,6 +1545,7 @@ void Section_Minimizer::write_compacted_sequence_without_mini(
 
 	// 5. Update the number of super k-mers
 	this->nb_blocks++;
+#endif
 }
 
 
@@ -1636,6 +1748,97 @@ uint64_t Section_Minimizer::read_compacted_sequence_without_mini(
 	if (this->cur_skmer_idx >= this->nb_blocks) return 0;
 
 	uint8_t buff[8];
+	uint64_t n = 0;
+
+#ifdef KERO_MODE_ROW
+	// ===== ROW MODE: Read directly from file =====
+	// Format: [n:8B][m_idx:8B][seq:nB][data:nB]
+
+	// 1. Read n (number of k-mers)
+	this->file->read(buff, 8);
+	load_big_endian(buff, 8, n);
+
+	// 2. Read m_idx (minimizer position)
+	this->file->read(buff, 8);
+	load_big_endian(buff, 8, mini_pos);
+
+	// 3. Read seq
+	uint64_t seq_size = n + this->k - this->m - 1;
+	size_t seq_bytes = bytes_from_bit_array(2, seq_size);
+	this->file->read(seq, seq_bytes);
+
+	// 4. Read data
+	if (data != nullptr && this->data_size > 0) {
+		size_t data_bytes = this->data_size * n;
+		this->file->read(data, data_bytes);
+	}
+
+#elif defined(KERO_MODE_COLUMNAR_NOCOMP)
+	// ===== COLUMNAR NOCOMP MODE: Read from uncompressed columns =====
+
+	// Initialize on first read
+	if (this->cur_skmer_idx == 0) {
+		this->last_n_pos = 0;
+		this->last_m_idx_pos = 0;
+		this->last_data_pos = 0;
+		this->last_seq_pos = seq_col_offset;
+
+		// Read n_value column (uncompressed)
+		this->file->jump_to(this->n_col_offset);
+		// First read the column size
+		this->file->read(buff, 8);
+		uint64_t n_col_size;
+		load_big_endian(buff, 8, n_col_size);  // Total bytes (should be nb_blocks * 8)
+		// Then read the values
+		this->n_value_buffer.resize(this->nb_blocks);
+		for (size_t i = 0; i < this->nb_blocks; i++) {
+			this->file->read(buff, 8);
+			load_big_endian(buff, 8, this->n_value_buffer[i]);
+		}
+
+		// Read m_idx column (uncompressed)
+		this->file->jump_to(this->m_idx_col_offset);
+		// First read the column size
+		this->file->read(buff, 8);
+		uint64_t m_idx_col_size;
+		load_big_endian(buff, 8, m_idx_col_size);  // Total bytes (should be nb_blocks * 8)
+		// Then read the values
+		this->m_idx_buffer.resize(this->nb_blocks);
+		for (size_t i = 0; i < this->nb_blocks; i++) {
+			this->file->read(buff, 8);
+			load_big_endian(buff, 8, this->m_idx_buffer[i]);
+		}
+
+		// Read data column (uncompressed)
+		if (this->data_size > 0) {
+			this->file->jump_to(this->data_col_offset);
+			// Read the size of the data buffer
+			this->file->read(buff, 8);
+			uint64_t nb_data_buf;
+			load_big_endian(buff, 8, nb_data_buf);
+			this->data_buffer.resize(nb_data_buf);
+			this->file->read(this->data_buffer.data(), nb_data_buf);
+		}
+	}
+
+	// Read from buffers
+	n = this->n_value_buffer[this->last_n_pos++];
+	mini_pos = this->m_idx_buffer[this->last_m_idx_pos++];
+
+	if (data != nullptr && this->data_size > 0) {
+		uint64_t nb_data_bytes = this->data_size * n;
+		for (int i = 0; i < nb_data_bytes; i++) {
+			data[i] = this->data_buffer[this->last_data_pos++];
+		}
+	}
+
+	uint64_t nb_seq_bytes = bytes_from_bit_array(2, n + this->k - this->m - 1);
+	this->file->jump_to(this->last_seq_pos);
+	this->file->read(seq, nb_seq_bytes);
+	this->last_seq_pos += nb_seq_bytes;
+
+#else
+	// ===== COLUMNAR COMP MODE: Read from compressed columns (default) =====
 
 	// Initialize the related positions
 	if (this->cur_skmer_idx == 0) {
@@ -1706,7 +1909,7 @@ uint64_t Section_Minimizer::read_compacted_sequence_without_mini(
 	}
 
 	// Read n
-	uint64_t n = this->n_value_buffer[this->last_n_pos++];
+	n = this->n_value_buffer[this->last_n_pos++];
 
 	// Read m_idx
 	mini_pos = this->m_idx_buffer[this->last_m_idx_pos++];
@@ -1724,6 +1927,8 @@ uint64_t Section_Minimizer::read_compacted_sequence_without_mini(
 	this->file->jump_to(this->last_seq_pos);
 	this->file->read(seq, nb_seq_bytes);
 	this->last_seq_pos += nb_seq_bytes;
+
+#endif
 
 	this->cur_skmer_idx++;
 	this->remaining_blocks--;
@@ -1784,17 +1989,19 @@ void Section_Minimizer::close() {
 	if (this->file->is_writer) {
 		// 1. Register the position in the hashtable section
 		if (this->file->indexed) {
-			this->file->register_minimizer_section(mask_mini(this->minimizer, this->m));
+			uint64_t mini_val = mask_mini(this->minimizer, this->m);
+			this->file->register_minimizer_section(mini_val, this->start_pos);
 		}
 
-		// 2. Write the section header
+#ifdef KERO_MODE_ROW
+		uint8_t buff[8];
+		store_big_endian(buff, 8, this->nb_blocks);
+		this->file->write_at(buff, 8, this->n_col_offset);
+#else
 		this->write_section_header();
-
-		// 3. Write the columns
 		this->write_columns();
-
-		// 4. Backfill the column offsets
 		this->backfill_column_offsets();
+#endif
 	}
 
 	if (this->file->is_reader) {
@@ -1821,6 +2028,117 @@ void Section_Minimizer::precache_columns_from_mmap(const uint8_t* mmap_ptr) {
     if (!n_value_buffer.empty()) return; // Already cached
 
     uint8_t buff[8];
+
+#ifdef KERO_MODE_ROW
+    // ===== MODE 1: ROW-ORIENTED STORAGE (Read row-by-row) =====
+    // Format: [n:8B][m_idx:8B][seq:nB][data:nB] per row
+    this->n_value_buffer.resize(this->nb_blocks);
+    this->m_idx_buffer.resize(this->nb_blocks);
+
+    size_t current_offset = this->n_col_offset;
+    size_t total_data_size = 0;
+    size_t total_seq_size = 0;
+
+    // First pass: read n and m_idx, calculate total sizes
+    for (size_t i = 0; i < nb_blocks; i++) {
+        // Read n
+        mmap_read(mmap_ptr, current_offset, buff, 8);
+        load_big_endian(buff, 8, n_value_buffer[i]);
+        current_offset += 8;
+
+        // Read m_idx
+        mmap_read(mmap_ptr, current_offset, buff, 8);
+        load_big_endian(buff, 8, m_idx_buffer[i]);
+        current_offset += 8;
+
+        // Calculate seq_size (seq without minimizer)
+        uint64_t seq_size = n_value_buffer[i] + k - m - 1;
+        size_t seq_bytes = bytes_from_bit_array(2, seq_size);
+        total_seq_size += seq_bytes;
+
+        // Calculate data size
+        total_data_size += n_value_buffer[i] * data_size;
+
+        // Skip seq and data for this row
+        current_offset += seq_bytes;
+        current_offset += n_value_buffer[i] * data_size;
+    }
+
+    // Second pass: read seq and data
+    current_offset = this->n_col_offset;
+
+    // Allocate buffers
+    if (total_seq_size > 0) {
+        this->seq_buffer.resize(total_seq_size);
+    }
+    if (total_data_size > 0) {
+        this->data_buffer.resize(total_data_size);
+    }
+
+    size_t seq_offset = 0;
+    size_t data_offset = 0;
+
+    for (size_t i = 0; i < nb_blocks; i++) {
+        // Skip n and m_idx
+        current_offset += 16;
+
+        // Read seq
+        uint64_t seq_size = n_value_buffer[i] + k - m - 1;
+        size_t seq_bytes = bytes_from_bit_array(2, seq_size);
+        if (seq_bytes > 0) {
+            mmap_read(mmap_ptr, current_offset, &seq_buffer[seq_offset], seq_bytes);
+            seq_offset += seq_bytes;
+            current_offset += seq_bytes;
+        }
+
+        // Read data
+        size_t row_data_size = n_value_buffer[i] * data_size;
+        if (row_data_size > 0) {
+            mmap_read(mmap_ptr, current_offset, &data_buffer[data_offset], row_data_size);
+            data_offset += row_data_size;
+            current_offset += row_data_size;
+        }
+    }
+
+#elif defined(KERO_MODE_COLUMNAR_NOCOMP)
+    // ===== MODE 2: COLUMNAR STORAGE (Read uncompressed columns) =====
+
+    // Read n value column (uncompressed)
+    uint64_t n_total_bytes;
+    mmap_read(mmap_ptr, this->n_col_offset, buff, 8);
+    load_big_endian(buff, 8, n_total_bytes);
+
+    this->n_value_buffer.resize(this->nb_blocks);
+    for (size_t i = 0; i < nb_blocks; i++) {
+        mmap_read(mmap_ptr, this->n_col_offset + 8 + i * 8, buff, 8);
+        load_big_endian(buff, 8, n_value_buffer[i]);
+    }
+
+    // Read m_idx column (uncompressed)
+    uint64_t m_idx_total_bytes;
+    mmap_read(mmap_ptr, this->m_idx_col_offset, buff, 8);
+    load_big_endian(buff, 8, m_idx_total_bytes);
+
+    this->m_idx_buffer.resize(this->nb_blocks);
+    for (size_t i = 0; i < nb_blocks; i++) {
+        mmap_read(mmap_ptr, this->m_idx_col_offset + 8 + i * 8, buff, 8);
+        load_big_endian(buff, 8, m_idx_buffer[i]);
+    }
+
+    // Read data column (uncompressed)
+    if (this->data_size > 0) {
+        uint64_t data_total_bytes;
+        mmap_read(mmap_ptr, this->data_col_offset, buff, 8);
+        load_big_endian(buff, 8, data_total_bytes);
+
+        if (data_total_bytes > 0) {
+            this->data_buffer.resize(data_total_bytes);
+            mmap_read(mmap_ptr, this->data_col_offset + 8, data_buffer.data(), data_total_bytes);
+        }
+    }
+
+#else  // KERO_MODE_COLUMNAR_COMP (default, compressed)
+    // ===== MODE 3: COLUMNAR STORAGE + INTEGER ARRAY COMPRESSION (Decompress columns) =====
 
     // Uncompress the n_value column
     uint64_t compressed_n_size;
@@ -1868,6 +2186,7 @@ void Section_Minimizer::precache_columns_from_mmap(const uint8_t* mmap_ptr) {
             p4ndec8(compressed_data_buf.data(), nb_data_buf, this->data_buffer.data());
         }
     }
+#endif
 }
 
 // ----- Hash Table Section -----
@@ -2060,7 +2379,7 @@ void Kero_reader::read_until_first_section_block() {
 				// sequence + data buffer
 				delete[] this->current_seq_data;
 				this->current_seq_data = new uint8_t[seq_max_size + data_max_size];
-				
+
 				// Shifts
 				this->current_shifts[0] = this->current_seq_data;
 				for (uint8_t i=1 ; i<4 ; i++)
@@ -2140,7 +2459,7 @@ uint64_t Kero_reader::next_block(uint8_t* & sequence, uint8_t* & data) {
 	}
 
 	uint64_t nb_kmers = current_section->read_compacted_sequence(sequence, data);
-	
+
 	remaining_kmers = 0;
 	remaining_blocks -= 1;
 	if (remaining_blocks == 0) {
@@ -2169,14 +2488,14 @@ bool Kero_reader::next_kmer(uint8_t* & kmer, uint8_t* & data) {
 	uint64_t kmer_idx = current_seq_kmers - remaining_kmers;
 
 	uint64_t start_nucl = prefix_offset + right_shift + kmer_idx;
-	uint64_t start_byte = start_nucl / 4;
+ 	uint64_t start_byte = start_nucl / 4;
 	uint64_t end_nucl = start_nucl + this->k - 1;
 	uint64_t end_byte = end_nucl / 4;
 
 	memcpy(current_kmer, current_shifts[right_shift]+start_byte, end_byte-start_byte+1);
 	kmer = current_kmer;
 	data = current_seq_data + current_seq_bytes + (current_seq_kmers - remaining_kmers) * this->data_size;
-	
+
 	// Read the next block if needed.
 	remaining_kmers -= 1;
 	if (remaining_kmers == 0) {
